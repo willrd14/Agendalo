@@ -12,7 +12,18 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Deno Edge Functions (separate runtime)
+    "supabase/functions/**",
+    // Coverage output (generated)
+    "coverage/**",
   ]),
+  {
+    // Test files commonly use `any` in mocks/assertions.
+    files: ["**/*.test.ts", "**/*.test.tsx"],
+    rules: {
+      "@typescript-eslint/no-explicit-any": "off",
+    },
+  },
 ]);
 
 export default eslintConfig;
