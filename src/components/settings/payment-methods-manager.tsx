@@ -69,13 +69,28 @@ export default function PaymentMethodsManager({
 }) {
   const supabase = useSupabaseBrowser();
   const isPro = plan === "pro";
-  const [methods, setMethods] = useState<PaymentMethod[]>(
-    initialMethods.length > 0
-      ? initialMethods
-      : [
-          { id: "", business_id: businessId, type: "paypal", is_enabled: true, bank_name: null, account_holder: null, account_number: null, transfer_notes: null, paypal_conversion_rate: null },
-          { id: "", business_id: businessId, type: "transfer", is_enabled: true, bank_name: null, account_holder: null, account_number: null, transfer_notes: null, paypal_conversion_rate: null },
-        ]
+  // Always keep exactly one local entry per method type, even if the
+  // business only ever had a row created for one of them in the DB (e.g. a
+  // business that enabled PayPal before "transfer" existed as an option) —
+  // otherwise toggling/editing a type with no existing row is a no-op,
+  // since updateMethod only patches entries already present in state.
+  const [methods, setMethods] = useState<PaymentMethod[]>(() =>
+    types.map(({ type }) => {
+      const existing = initialMethods.find((m) => m.type === type);
+      return (
+        existing ?? {
+          id: "",
+          business_id: businessId,
+          type,
+          is_enabled: true,
+          bank_name: null,
+          account_holder: null,
+          account_number: null,
+          transfer_notes: null,
+          paypal_conversion_rate: null,
+        }
+      );
+    })
   );
   const [deposit, setDeposit] = useState<DepositSettings>(initialDeposit);
   const [loading, setLoading] = useState(false);
