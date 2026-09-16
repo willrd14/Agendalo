@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { cancelPaypalSubscription } from "@/lib/paypal";
 
 export async function POST() {
@@ -42,7 +42,9 @@ export async function POST() {
 
     await cancelPaypalSubscription(sub.paypal_subscription_id);
 
-    await supabase
+    // Write with the service role: the RLS-enforced client no longer has
+    // UPDATE access on `subscriptions` (see C-1 fix, migration 0017).
+    await createServiceClient()
       .from("subscriptions")
       .update({ status: "cancelled" })
       .eq("id", sub.id);

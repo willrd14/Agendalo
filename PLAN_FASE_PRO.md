@@ -27,12 +27,24 @@ Este documento sirve como guía de contexto para la transición a la carpeta del
     2. Configurar en **Supabase → Project Settings → Edge Functions → Secrets** (no en `.env.local`, ese archivo solo aplica a Next.js): `TWILIO_ACCOUNT_SID`, `TWILIO_API_KEY_SID`, `TWILIO_API_KEY_SECRET`, `TWILIO_PHONE_NUMBER`.
     3. Probar el envío real una vez esté el número.
 
-## 3. Módulo Financiero Pro (Prioridad Media) — Pendiente
+## 3. Módulo Financiero Pro (Prioridad Media) — ✅ Completo + hardening de seguridad (16 sep 2026)
 - **Objetivo:** Gestión de depósitos y reportes avanzados.
 - **Acciones:**
-    - Implementar flujo de pago de depósito para garantizar citas (columnas `deposit_amount`/`deposit_status` ya existen en `appointments` y ya están tipadas).
-    - Crear generador de reportes financieros en PDF/CSV.
-    - Integración de estados de depósito en la tabla de citas (UI).
+    - [x] Flujo de pago de depósito para garantizar citas — configuración en Facturación (toggle + porcentaje/monto fijo), cobro vía PayPal reutilizando el flujo de `payment_sessions` (nuevo campo `session_type`), y `finalizePaypalPayment` ramifica para marcar `deposit_amount`/`deposit_status` en la cita. Gateado a plan Pro real (sin trial) tanto en UI como en el endpoint.
+    - [x] Generador de reportes financieros en CSV y PDF (`jspdf`/`jspdf-autotable`) en el dashboard de Pagos, exporta los pagos filtrados (estado + búsqueda), gateado a plan Pro.
+    - [x] Badge de estado de depósito (pagado/pendiente/reembolsado) en la tarjeta de cada cita, solo cuando `deposit_amount > 0`.
+- **Notas técnicas:**
+    - Nueva migración `0016_add_deposit_settings.sql`: añade a `businesses` las columnas `deposit_required`, `deposit_type` (`percentage`/`fixed`), `deposit_percentage`, `deposit_fixed_amount`; añade `session_type` (`full`/`deposit`) a `payment_sessions`.
+    - Nuevo endpoint `POST /api/payments/paypal/create-deposit`; la captura reutiliza `/api/payments/paypal/capture` y `finalizePaypalPayment()` (ramifica por `session_type`, sin duplicar lógica).
+    - `deposit_amount` en la cita se guarda en moneda local del negocio; el registro en `payments` (ledger financiero) sigue en USD capturado por PayPal, igual que el flujo de pago completo.
+    - Si el negocio requiere depósito pero no tiene PayPal habilitado, el requisito no se aplica (cae al flujo manual normal) — no bloquea la reserva.
+    - Migración `0016_add_deposit_settings.sql` **aplicada contra Supabase** (proyecto `qjrnhcexzbrqntappvga`, vía MCP) el 16 sep 2026 — verificada con `list_tables`: `businesses.deposit_required/deposit_type/deposit_percentage/deposit_fixed_amount` y `payment_sessions.session_type` ya existen en producción.
+- **QA + Pentest (16 sep 2026):** se hizo una revisión de calidad y una de seguridad dedicadas antes de dar el módulo por terminado. El pentest encontró 4 vulnerabilidades críticas (una preexistente en `subscriptions` que permitía auto-otorgarse plan Pro gratis, manipulación del monto del depósito desde el cliente, webhook de PayPal sin verificar firma, relay de email abierto con inyección HTML) y varias altas/medias (datos bancarios de todos los negocios expuestos públicamente, config de depósito sin límites reales, sin rate limiting, entre otras). Todo se corrigió — ver detalle en `CHANGELOG-Agendalo.md` (16 sep 2026, sección "Hardening de seguridad").
+- **Falta para producción:**
+    1. Probar el flujo de depósito de punta a punta (configurar en Facturación → reservar como cliente → pagar depósito con PayPal → verificar cita `confirmed` + badge en `/appointments` + registro en `/payments`).
+    2. Probar exportación CSV/PDF con datos reales en plan Pro vs. Basic.
+    3. Configurar `PAYPAL_WEBHOOK_ID` (Dashboard de PayPal → Webhooks) y `EMAIL_INTERNAL_SECRET` en producción — ver `.env.example`; sin `PAYPAL_WEBHOOK_ID` el webhook de billing rechaza todos los eventos (falla cerrado, a propósito).
+    4. Decisión pendiente de Williams: si vale la pena eliminar la creación automática de cuentas de invitado en el flujo de pago (requiere hacer `appointments.client_id` nullable — cambio de esquema más amplio, se dejó fuera de este hardening a propósito).
 
 ## 4. Módulo de Fidelización y Logística (Prioridad Baja) — Pendiente
 - **Objetivo:** Cupones y Lista de Espera Inteligente.

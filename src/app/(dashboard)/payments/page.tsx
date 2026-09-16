@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import PaymentsList, { type PaymentRow, type PaymentStats } from "@/components/payments/payments-list";
+import { getActiveBusinessPlan } from "@/lib/plans";
 
 export const dynamic = "force-dynamic";
 
@@ -24,13 +25,16 @@ export default async function PaymentsPage() {
     redirect("/onboarding");
   }
 
-  const { data } = await supabase
-    .from("payments")
-    .select(
-      "id, amount, currency, method, status, paypal_transaction_id, created_at, appointment_id, appointments(start_time, date, services(name))"
-    )
-    .eq("business_id", business.id)
-    .order("created_at", { ascending: false });
+  const [{ data }, plan] = await Promise.all([
+    supabase
+      .from("payments")
+      .select(
+        "id, amount, currency, method, status, paypal_transaction_id, is_deposit, created_at, appointment_id, appointments(start_time, date, services(name))"
+      )
+      .eq("business_id", business.id)
+      .order("created_at", { ascending: false }),
+    getActiveBusinessPlan(supabase, business.id),
+  ]);
 
   const rows = (data ?? []) as unknown as PaymentRow[];
 
@@ -56,6 +60,7 @@ export default async function PaymentsPage() {
         payments={rows}
         stats={stats}
         defaultCurrency={business.currency}
+        plan={plan}
       />
     </div>
   );

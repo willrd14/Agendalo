@@ -26,8 +26,11 @@ export async function POST(req: NextRequest) {
       paidAmount: result.paidAmount,
     });
   } catch (err) {
-    const message =
-      err instanceof Error ? err.message : "Error al confirmar el pago";
-    return NextResponse.json({ error: message }, { status: 500 });
+    const errorId = Date.now().toString(36);
+    console.error(`capture: unhandled error [${errorId}]`, err);
+    return NextResponse.json(
+      { error: `No se pudo procesar el pago, intenta de nuevo. (ref: ${errorId})` },
+      { status: 500 }
+    );
   }
 }

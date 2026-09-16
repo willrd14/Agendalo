@@ -60,6 +60,10 @@ export interface Database {
           cancellation_hours: number;
           sms_reminders_enabled: boolean | null;
           reminder_message_template: string | null;
+          deposit_required: boolean;
+          deposit_type: "percentage" | "fixed";
+          deposit_percentage: number;
+          deposit_fixed_amount: number;
           created_at: string;
           updated_at: string;
         };
@@ -81,6 +85,10 @@ export interface Database {
           cancellation_hours?: number;
           sms_reminders_enabled?: boolean | null;
           reminder_message_template?: string | null;
+          deposit_required?: boolean;
+          deposit_type?: "percentage" | "fixed";
+          deposit_percentage?: number;
+          deposit_fixed_amount?: number;
           created_at?: string;
           updated_at?: string;
         };
@@ -102,6 +110,10 @@ export interface Database {
           cancellation_hours?: number;
           sms_reminders_enabled?: boolean | null;
           reminder_message_template?: string | null;
+          deposit_required?: boolean;
+          deposit_type?: "percentage" | "fixed";
+          deposit_percentage?: number;
+          deposit_fixed_amount?: number;
           created_at?: string;
           updated_at?: string;
         };
@@ -271,6 +283,8 @@ export interface Database {
           method: "paypal" | "transfer";
           status: "pending" | "completed" | "failed" | "refunded";
           paypal_transaction_id: string | null;
+          /** True when this payment was a deposit, not the full service price (QA-7). */
+          is_deposit: boolean;
           created_at: string;
         };
         Insert: {
@@ -282,6 +296,7 @@ export interface Database {
           method: "paypal" | "transfer";
           status?: "pending" | "completed" | "failed" | "refunded";
           paypal_transaction_id?: string | null;
+          is_deposit?: boolean;
           created_at?: string;
         };
         Update: {
@@ -293,7 +308,80 @@ export interface Database {
           method?: "paypal" | "transfer";
           status?: "pending" | "completed" | "failed" | "refunded";
           paypal_transaction_id?: string | null;
+          is_deposit?: boolean;
           created_at?: string;
+        };
+      };
+      payment_sessions: {
+        Row: {
+          id: string;
+          business_id: string;
+          service_id: string;
+          client_name: string | null;
+          client_email: string | null;
+          client_phone: string | null;
+          notes: string | null;
+          appointment_date: string;
+          start_time: string;
+          end_time: string;
+          cancel_token: string | null;
+          amount_dop: number;
+          currency: string;
+          amount_usd: number;
+          status: "pending" | "completed" | "failed" | "cancelled";
+          session_type: "full" | "deposit";
+          paypal_order_id: string | null;
+          paypal_capture_id: string | null;
+          /** Client IP captured at session creation, used for rate limiting (A-3). */
+          client_ip: string | null;
+          created_at: string;
+          expires_at: string;
+        };
+        Insert: {
+          id?: string;
+          business_id: string;
+          service_id: string;
+          client_name?: string | null;
+          client_email?: string | null;
+          client_phone?: string | null;
+          notes?: string | null;
+          appointment_date: string;
+          start_time: string;
+          end_time: string;
+          cancel_token?: string | null;
+          amount_dop: number;
+          currency?: string;
+          amount_usd: number;
+          status?: "pending" | "completed" | "failed" | "cancelled";
+          session_type?: "full" | "deposit";
+          paypal_order_id?: string | null;
+          paypal_capture_id?: string | null;
+          client_ip?: string | null;
+          created_at?: string;
+          expires_at?: string;
+        };
+        Update: {
+          id?: string;
+          business_id?: string;
+          service_id?: string;
+          client_name?: string | null;
+          client_email?: string | null;
+          client_phone?: string | null;
+          notes?: string | null;
+          appointment_date?: string;
+          start_time?: string;
+          end_time?: string;
+          cancel_token?: string | null;
+          amount_dop?: number;
+          currency?: string;
+          amount_usd?: number;
+          status?: "pending" | "completed" | "failed" | "cancelled";
+          session_type?: "full" | "deposit";
+          paypal_order_id?: string | null;
+          paypal_capture_id?: string | null;
+          client_ip?: string | null;
+          created_at?: string;
+          expires_at?: string;
         };
       };
       notifications: {

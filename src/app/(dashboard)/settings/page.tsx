@@ -50,6 +50,13 @@ export default async function SettingsPage() {
           businessId={business.id}
           businessCurrency={business.currency ?? "DOP"}
           initialMethods={(paymentMethods ?? []) as unknown as PaymentMethod[]}
+          plan={plan}
+          initialDeposit={{
+            deposit_required: business.deposit_required ?? false,
+            deposit_type: (business.deposit_type as "percentage" | "fixed") ?? "percentage",
+            deposit_percentage: business.deposit_percentage ?? 20,
+            deposit_fixed_amount: business.deposit_fixed_amount ?? 0,
+          }}
         />
         <AvailabilityManager
           businessId={business.id}

@@ -2,6 +2,47 @@
 
 Sistema de Reservas SaaS (Next.js 16 + Supabase + Tailwind + shadcn/ui + TypeScript).
 
+## 16 de septiembre de 2026
+
+### Hardening de seguridad — QA + Pentest del Módulo Financiero Pro
+Antes de dar el módulo por listo para producción, se hizo una revisión de calidad (QA) y un pentest dedicados por subagentes independientes. Resumen de lo encontrado y corregido:
+
+**Críticos:**
+- **Escalada de plan gratis:** la política RLS de `subscriptions` (desde `0005_add_subscriptions_insert_update_policies.sql`) permitía a cualquier dueño de negocio autenticado insertarse/actualizarse a plan Pro sin pagar. Revocadas las políticas de INSERT/UPDATE públicas; todas las escrituras a `subscriptions` (`/api/billing/start`, `/sync`, `/cancel`) migradas a `createServiceClient()`. Preexistente, no introducido por el módulo nuevo, pero descubierto al auditarlo.
+- **Manipulación de montos del depósito desde el cliente:** `create-deposit`/`create` confiaban en `price`/`conversionRate` enviados por el navegador. Ahora se recalculan siempre server-side contra `services.price` y `business_payment_methods.paypal_conversion_rate` reales, validando que el servicio pertenezca al negocio, con `zod` y un mínimo de cobro de US$1.
+- **Webhook de PayPal sin verificar firma:** `/api/billing/webhook` aceptaba cualquier evento falsificado (podía activar suscripciones gratis o envenenar los reportes financieros con pagos falsos). Ahora verifica la firma contra la API de PayPal (`PAYPAL_WEBHOOK_ID` + cabeceras `paypal-*`) antes de procesar, y falla cerrado si no está configurado.
+- **Relay de email abierto + inyección HTML:** rutas `/api/emails/*` públicas sin auth, con datos de usuario interpolados sin escapar en el HTML de los correos. Se añadió `escapeHtml()` en todas las plantillas; `appointment-cancelled`/`appointment-reminder` (sin caller legítimo fuera del propio backend) se protegieron con un secreto interno (`EMAIL_INTERNAL_SECRET`); `appointment-confirmation` (con caller público legítimo) se dejó abierta pero con validación estricta + rate limiting.
+
+**Altos:**
+- **Datos bancarios de todos los negocios expuestos:** `business_payment_methods` tenía `SELECT USING (true)`, exponiendo cuentas bancarias de todos los tenants con la anon key. La página pública de reserva ahora carga esos datos server-side (service role) solo para el negocio consultado; se eliminó el SELECT público a nivel de RLS.
+- **Config de depósito sin límites reales:** se guardaba con un `update` directo del cliente (bypasseaba el gating a Pro y no tenía tope de porcentaje). Nueva ruta `/api/settings/deposit` que valida plan Pro y rangos (1-100%) server-side, más `CHECK` constraints en la base de datos.
+- **Sin rate limiting:** se agregó throttling propio (sin servicios externos) por IP en `create`/`create-deposit` (máx. 5 sesiones/10 min) y en las rutas de email sin secreto interno, vía nueva tabla `rate_limit_log` y columna `payment_sessions.client_ip`.
+
+**Medios:** validación de `orderId` en captura ya no deja pasar `NULL` sin chequear; se valida que la cita no sea en el pasado ni se solape con otra antes de crear; se rechaza capturar sesiones de pago ya expiradas (`expires_at`); los errores internos (Postgres/PayPal) ya no se filtran al cliente, solo un `errorId` genérico para soporte.
+
+**Hallazgos de QA corregidos:** fallback de reserva manual cuando el depósito calculado es inválido/0 (antes bloqueaba la reserva sin salida); acción manual "Marcar depósito como reembolsado" en Citas (antes ese estado era inalcanzable); columna `payments.is_deposit` para distinguir depósitos de pagos completos en los reportes CSV/PDF; `appointments.deposit_status` convertido de `text` al enum `deposit_status` real (constraint de base de datos).
+
+**Diferido a propósito (documentado, no implementado):** eliminar la creación automática de cuentas de invitado en el flujo de pago (requiere `appointments.client_id` nullable, cambio de esquema mayor — decisión pendiente de Williams); reembolso automático vía API de PayPal ante fallos parciales (se dejó un manejo best-effort: la sesión queda marcada `failed` y logueada para reconciliación manual); rediseño de `/paypal-return` de GET a POST (riesgo bajo aceptado); gating de exportación CSV/PDF sigue siendo solo visual (riesgo bajo aceptado, no expone datos adicionales a los ya visibles en pantalla).
+
+**Migraciones:** `0017_security_fixes.sql` (RLS de `subscriptions`, constraints de depósito, `rate_limit_log`, `payments.is_deposit`, enum `deposit_status` aplicado) y `0018_restrict_payment_methods_read.sql` (RLS de `business_payment_methods`) — ambas aplicadas contra Supabase (`qjrnhcexzbrqntappvga`) y verificadas sin nuevas alertas de seguridad (`get_advisors`).
+
+**Verificado:** `npx tsc --noEmit` ✓, `npm run lint` ✓, `npx vitest run` ✓ (35/35, incluye tests nuevos de idempotencia/expiración/solapamiento), `npm run build` ✓.
+
+**Pendiente antes de producción:** configurar `PAYPAL_WEBHOOK_ID` y `EMAIL_INTERNAL_SECRET` en el entorno real (ver `.env.example`).
+
+### Fase Pro — Módulo 3: Financiero (depósitos + reportes) — completado (código + migración aplicada)
+Implementado con dos subagentes en paralelo (uno para el flujo de pago de depósito, otro para reportes + badge de citas), luego integrado y verificado en conjunto.
+
+- **Configuración de depósito** (`payment-methods-manager.tsx`, dentro de Facturación): nuevo bloque "Depósito para garantizar citas" — toggle, tipo (porcentaje/monto fijo) y monto. Gateado a plan Pro real (sin período de prueba), mismo patrón visual que Comunicación (banner + bloque deshabilitado + CTA a `/billing`). Se guarda en `businesses`.
+- **Cobro del depósito vía PayPal:** nuevo endpoint `POST /api/payments/paypal/create-deposit`; la captura reutiliza `/api/payments/paypal/capture` — `finalizePaypalPayment()` ahora ramifica por el nuevo campo `payment_sessions.session_type` (`full`/`deposit`) en vez de duplicar la lógica de captura/creación de cliente/email. Al pagar el depósito, la cita queda `confirmed` con `deposit_amount`/`deposit_status: 'paid'` (monto en la moneda local del negocio); el pago queda registrado en `payments` en USD, igual que el flujo de pago completo.
+- **Flujo de reserva pública** (`book/page.tsx` + `booking-flow.tsx`): si el negocio es Pro, requiere depósito y tiene PayPal configurado, el botón de confirmación manual se oculta y solo se muestra "Pagar depósito con PayPal (USD)". Si no hay PayPal habilitado, el requisito de depósito no se aplica (no bloquea la reserva).
+- **`/paypal-return`:** distingue el mensaje de éxito ("¡Depósito pagado!" vs "¡Pago exitoso!") según el tipo de sesión.
+- **Reportes financieros (CSV/PDF):** en el dashboard de Pagos, botones "Exportar CSV"/"Exportar PDF" (librerías nuevas `jspdf` + `jspdf-autotable`) que exportan los pagos ya filtrados (estado + búsqueda) con las mismas columnas de la tabla. Gateado a plan Pro (botones deshabilitados + banner con CTA a `/billing` en Básico/trial).
+- **Badge de depósito en Citas:** cada tarjeta de cita muestra "Depósito pagado" / "Depósito pendiente" / "Depósito reembolsado" junto al estado de la cita, solo cuando la cita tiene un depósito asociado (`deposit_amount > 0`).
+- **Migración `supabase/migrations/0016_add_deposit_settings.sql`:** añade a `businesses` (`deposit_required`, `deposit_type`, `deposit_percentage`, `deposit_fixed_amount`) y a `payment_sessions` (`session_type`). **Aplicada contra Supabase** (proyecto `qjrnhcexzbrqntappvga`, vía MCP) y verificada con `list_tables`.
+- **Verificado:** `npx tsc --noEmit` ✓, `npm run lint` ✓ (0 errores/warnings), `npx vitest run` ✓ (30/30, incluye 5 tests actualizados de `payment-methods-manager`), `npm run build` ✓ (Next.js 16 Turbopack, incluye la nueva ruta `/api/payments/paypal/create-deposit`).
+- **Pendiente:** probar el flujo completo con datos reales (configurar depósito → reservar → pagar → verificar cita/badge/reporte).
+
 ## 9 de septiembre de 2026
 
 ### Fase Pro — Módulo 2: Comunicación (solo SMS vía Twilio) — en progreso

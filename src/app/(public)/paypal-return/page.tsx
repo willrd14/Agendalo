@@ -27,8 +27,14 @@ export default async function PaypalReturnPage({
       const result = await finalizeSessionWithStoredOrder(sessionId);
       if (result.success) {
         success = true;
-        title = "¡Pago exitoso!";
-        description = "Tu reserva ha sido confirmada y tu pago procesado.";
+        if (result.isDeposit) {
+          title = "¡Depósito pagado!";
+          description =
+            "Tu reserva ha sido confirmada con el depósito de garantía. El resto se paga en el negocio.";
+        } else {
+          title = "¡Pago exitoso!";
+          description = "Tu reserva ha sido confirmada y tu pago procesado.";
+        }
       } else {
         title = "No se pudo completar la reserva";
         description = result.error ?? "Ocurrió un error al procesar el pago.";

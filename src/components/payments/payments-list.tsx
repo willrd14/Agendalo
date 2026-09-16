@@ -1,13 +1,24 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
-import { Wallet, CheckCircle2, Clock, List, TrendingUp } from "lucide-react";
+import {
+  Wallet,
+  CheckCircle2,
+  Clock,
+  List,
+  TrendingUp,
+  Download,
+  FileText,
+  Lock,
+} from "lucide-react";
+import type { BusinessPlan } from "@/lib/plans";
 
 export interface PaymentRow {
   id: string;
@@ -16,6 +27,8 @@ export interface PaymentRow {
   method: "paypal" | "transfer";
   status: string;
   paypal_transaction_id: string | null;
+  /** True when this payment was a deposit, not the full service price (QA-7). */
+  is_deposit: boolean;
   created_at: string;
   appointment_id: string | null;
   appointments: {
@@ -51,11 +64,14 @@ export default function PaymentsList({
   payments,
   stats,
   defaultCurrency,
+  plan,
 }: {
   payments: PaymentRow[];
   stats: PaymentStats;
   defaultCurrency: string;
+  plan: BusinessPlan;
 }) {
+  const isPro = plan === "pro";
   const [filter, setFilter] = useState<"all" | string>("all");
   const [search, setSearch] = useState("");
 
@@ -73,6 +89,83 @@ export default function PaymentsList({
   }, [payments, filter, search]);
 
   const currency = payments[0]?.currency ?? defaultCurrency;
+
+  const buildExportRows = () =>
+    filtered.map((p) => ({
+      service: p.appointments?.services?.name ?? "—",
+      date: format(new Date(p.created_at), "d 'de' MMMM, yyyy", { locale: es }),
+      amount: `${Number(p.amount).toFixed(2)} ${p.currency}`,
+      type: p.is_deposit ? "Depósito" : "Pago completo",
+      method: methodLabel[p.method] ?? p.method,
+      status: statusConfig[p.status]?.label ?? p.status,
+      reference: p.paypal_transaction_id ?? "—",
+    }));
+
+  const downloadBlob = (blob: Blob, filename: string) => {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const escapeCsvField = (value: string) => {
+    if (/[",\n]/.test(value)) {
+      return `"${value.replace(/"/g, '""')}"`;
+    }
+    return value;
+  };
+
+  const exportCsv = () => {
+    if (!isPro) return;
+    const rows = buildExportRows();
+    const headers = ["Servicio", "Fecha", "Monto", "Tipo", "Método", "Estado", "Referencia"];
+    const lines = [
+      headers.join(","),
+      ...rows.map((r) =>
+        [r.service, r.date, r.amount, r.type, r.method, r.status, r.reference]
+          .map((field) => escapeCsvField(String(field)))
+          .join(",")
+      ),
+    ];
+    const csvContent = "﻿" + lines.join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const filename = `agendalo-pagos-${format(new Date(), "yyyy-MM-dd")}.csv`;
+    downloadBlob(blob, filename);
+  };
+
+  const exportPdf = async () => {
+    if (!isPro) return;
+    const [{ default: jsPDF }, { autoTable }] = await Promise.all([
+      import("jspdf"),
+      import("jspdf-autotable"),
+    ]);
+    const doc = new jsPDF();
+    doc.setFontSize(14);
+    doc.text("Reporte de pagos — Agendalo", 14, 18);
+    doc.setFontSize(10);
+    doc.setTextColor(100);
+    doc.text(
+      `Generado el ${format(new Date(), "d 'de' MMMM, yyyy", { locale: es })}`,
+      14,
+      25
+    );
+
+    const rows = buildExportRows();
+    autoTable(doc, {
+      startY: 32,
+      head: [["Servicio", "Fecha", "Monto", "Tipo", "Método", "Estado", "Referencia"]],
+      body: rows.map((r) => [r.service, r.date, r.amount, r.type, r.method, r.status, r.reference]),
+      styles: { fontSize: 9 },
+      headStyles: { fillColor: [37, 99, 235] },
+    });
+
+    const filename = `agendalo-pagos-${format(new Date(), "yyyy-MM-dd")}.pdf`;
+    doc.save(filename);
+  };
 
   const metricCards = [
     {
@@ -156,7 +249,44 @@ export default function PaymentsList({
       {/* Table */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Historial de pagos</CardTitle>
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <CardTitle className="text-base">Historial de pagos</CardTitle>
+            <div className="flex items-center gap-2 flex-wrap">
+              {!isPro && (
+                <span className="flex items-center gap-1 text-xs font-medium text-muted-foreground bg-muted px-2.5 py-1 rounded-full shrink-0">
+                  <Lock className="h-3 w-3" /> Plan Pro
+                </span>
+              )}
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={exportCsv}
+                disabled={!isPro || filtered.length === 0}
+                title={!isPro ? "Los reportes exportables son una función del plan Pro" : undefined}
+              >
+                <Download className="mr-1.5 h-4 w-4" /> Exportar CSV
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={exportPdf}
+                disabled={!isPro || filtered.length === 0}
+                title={!isPro ? "Los reportes exportables son una función del plan Pro" : undefined}
+              >
+                <FileText className="mr-1.5 h-4 w-4" /> Exportar PDF
+              </Button>
+            </div>
+          </div>
+          {!isPro && (
+            <div className="rounded-md border border-accent bg-accent/40 px-4 py-3 flex items-center justify-between gap-4 flex-wrap mt-2">
+              <p className="text-sm text-accent-foreground">
+                Exportar reportes en PDF y CSV es una función del <span className="font-medium">plan Pro</span>.
+              </p>
+              <Link href="/billing">
+                <Button size="sm" variant="secondary">Ver plan Pro</Button>
+              </Link>
+            </div>
+          )}
         </CardHeader>
         <CardContent>
           {filtered.length === 0 ? (
@@ -176,6 +306,7 @@ export default function PaymentsList({
                     <th className="pb-3 pr-4">Servicio</th>
                     <th className="pb-3 pr-4">Fecha</th>
                     <th className="pb-3 pr-4">Monto</th>
+                    <th className="pb-3 pr-4">Tipo</th>
                     <th className="pb-3 pr-4">Método</th>
                     <th className="pb-3 pr-4">Estado</th>
                     <th className="pb-3">Referencia</th>
@@ -194,6 +325,13 @@ export default function PaymentsList({
                       </td>
                       <td className="py-3 pr-4 font-semibold text-foreground">
                         {Number(p.amount).toFixed(2)} {p.currency}
+                      </td>
+                      <td className="py-3 pr-4">
+                        {p.is_deposit ? (
+                          <Badge className="bg-blue-100 text-blue-700">Depósito</Badge>
+                        ) : (
+                          <span className="text-muted-foreground text-xs">Pago completo</span>
+                        )}
                       </td>
                       <td className="py-3 pr-4 text-muted-foreground">
                         {methodLabel[p.method] ?? p.method}

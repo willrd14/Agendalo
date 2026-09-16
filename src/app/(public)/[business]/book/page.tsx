@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
-import { getPayPalEligibility } from "@/lib/plans";
+import { getPayPalEligibility, getActiveBusinessPlan, isProPlan } from "@/lib/plans";
 import BookingFlow from "@/components/booking/booking-flow";
 
 export const dynamic = "force-dynamic";
@@ -41,7 +41,15 @@ export default async function BookPage({
     .eq("business_id", businessData.id)
     .eq("is_active", true);
 
-  const { data: paymentMethodsData } = await supabase
+  // A-1: business_payment_methods can no longer be read anonymously (RLS
+  // now restricts SELECT to the owner + service role, see migration 0018 —
+  // it used to be `FOR SELECT USING (true)`, exposing every business' bank
+  // account details to anyone with the anon key). The public booking page
+  // needs this data for exactly one business, so it's fetched here with the
+  // service role and passed down as a prop instead of letting the client
+  // component query it directly.
+  const serviceSupabase = createServiceClient();
+  const { data: paymentMethodsData } = await serviceSupabase
     .from("business_payment_methods")
     .select("*")
     .eq("business_id", businessData.id)
@@ -70,7 +78,6 @@ export default async function BookPage({
   // PayPal (cobro online por servicio) es feature exclusiva de Pro. Durante la
   // prueba gratuita el negocio también puede ofrecerlo. Se consulta con service
   // role porque la página es pública (RLS de subscriptions restringe al dueño).
-  const serviceSupabase = createServiceClient();
   const paypalEligibility = await getPayPalEligibility(serviceSupabase, {
     id: businessData.id,
     created_at: businessData.created_at,
@@ -79,6 +86,18 @@ export default async function BookPage({
   const hasConfiguredPaypal =
     (paypalMethod?.is_enabled ?? false) &&
     Number(paypalMethod?.paypal_conversion_rate ?? 0) > 0;
+
+  // El depósito para garantizar citas es una función exclusiva del plan Pro
+  // (sin prueba gratuita) y requiere PayPal configurado para poder cobrarse
+  // en línea. Si el negocio no tiene PayPal habilitado, no se exige
+  // depósito: no hay forma de cobrarlo online y la cita sigue el flujo
+  // manual habitual.
+  const businessPlan = await getActiveBusinessPlan(serviceSupabase, businessData.id);
+  const depositRequired =
+    isProPlan(businessPlan) &&
+    Boolean(businessData.deposit_required) &&
+    paypalEligibility.allowed &&
+    hasConfiguredPaypal;
 
   const businessProps = {
     id: businessData.id,
@@ -105,6 +124,10 @@ export default async function BookPage({
           paypalEligibility.allowed && hasConfiguredPaypal
         }
         paypalConversionRate={Number(paypalMethod?.paypal_conversion_rate ?? 0)}
+        depositRequired={depositRequired}
+        depositType={(businessData.deposit_type as "percentage" | "fixed") ?? "percentage"}
+        depositPercentage={Number(businessData.deposit_percentage ?? 20)}
+        depositFixedAmount={Number(businessData.deposit_fixed_amount ?? 0)}
       />
     </div>
   );

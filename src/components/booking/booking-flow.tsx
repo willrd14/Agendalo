@@ -67,6 +67,10 @@ export default function BookingFlow({
   transferMethod,
   paypalEnabled,
   paypalConversionRate,
+  depositRequired,
+  depositType,
+  depositPercentage,
+  depositFixedAmount,
 }: {
   business: BusinessProps;
   services: Service[];
@@ -76,6 +80,11 @@ export default function BookingFlow({
   transferMethod?: TransferMethod;
   paypalEnabled?: boolean;
   paypalConversionRate?: number;
+  /** True when the business requires a deposit AND it can be collected online (Pro + PayPal configured). */
+  depositRequired?: boolean;
+  depositType?: "percentage" | "fixed";
+  depositPercentage?: number;
+  depositFixedAmount?: number;
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -288,6 +297,75 @@ export default function BookingFlow({
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Error al iniciar el pago";
+      toast.error(message);
+      setLoading(false);
+    }
+  };
+
+  const depositAmount =
+    selectedService && depositRequired
+      ? depositType === "fixed"
+        ? Number(depositFixedAmount ?? 0)
+        : Number(
+            ((Number(selectedService.price) * Number(depositPercentage ?? 0)) / 100).toFixed(2)
+          )
+      : 0;
+
+  // QA-1/QA-2: a deposit is only actually collectible online when it
+  // computes to a positive amount (e.g. a free service with a percentage
+  // deposit would compute to 0). If it doesn't, fall back to the manual
+  // "Confirmar reserva" flow instead of leaving the client with no way to
+  // book at all.
+  const depositCollectible = depositRequired && depositAmount > 0;
+
+  const handleDepositPayment = async () => {
+    if (!selectedService || !selectedDate || !selectedTime) return;
+    if (!clientEmail) {
+      toast.error("Ingresa tu email");
+      return;
+    }
+    setLoading(true);
+    try {
+      if (!paypalEnabled || !paypalConversionRate) {
+        throw new Error("El pago con PayPal no está disponible para este negocio");
+      }
+
+      const endTime = computeEndTime(selectedTime, selectedService.duration_minutes);
+      const dateStr = format(selectedDate, "yyyy-MM-dd");
+
+      const res = await fetch("/api/payments/paypal/create-deposit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          businessId: business.id,
+          serviceId: selectedService.id,
+          serviceName: selectedService.name,
+          price: Number(selectedService.price),
+          currency: business.currency,
+          conversionRate: paypalConversionRate,
+          clientName,
+          clientEmail,
+          clientPhone: clientPhone || undefined,
+          notes: notes || undefined,
+          appointmentDate: dateStr,
+          startTime: selectedTime,
+          endTime,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error ?? "Error al iniciar el pago del depósito");
+      }
+
+      if (!data.approveUrl) {
+        throw new Error("No se pudo redirigir a PayPal");
+      }
+
+      window.location.assign(data.approveUrl);
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Error al iniciar el pago del depósito";
       toast.error(message);
       setLoading(false);
     }
@@ -703,25 +781,57 @@ export default function BookingFlow({
                   {business.currency}
                 </span>
               </div>
+              {depositCollectible && (
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">
+                    Depósito para garantizar la cita
+                  </span>
+                  <span className="font-semibold text-foreground">
+                    ${depositAmount.toLocaleString("es-DO")} {business.currency}
+                  </span>
+                </div>
+              )}
             </CardContent>
             <CardHeader>
-              <Button
-                className="w-full"
-                style={{ backgroundColor: primary }}
-                onClick={handleConfirm}
-                disabled={loading || !clientName || !clientEmail}
-              >
-                {loading ? "Procesando..." : "Confirmar reserva"}
-              </Button>
-              {paypalEnabled && (
-                <Button
-                  variant="outline"
-                  className="w-full"
-                  onClick={handlePaypalPayment}
-                  disabled={loading || !clientName || !clientEmail}
-                >
-                  Pagar ahora con PayPal (USD)
-                </Button>
+              {depositCollectible ? (
+                <>
+                  <p className="text-xs text-muted-foreground mb-1">
+                    Este negocio requiere un depósito por PayPal para
+                    confirmar la cita. El resto se paga directamente en el
+                    negocio.
+                  </p>
+                  <Button
+                    className="w-full"
+                    style={{ backgroundColor: primary }}
+                    onClick={handleDepositPayment}
+                    disabled={loading || !clientName || !clientEmail}
+                  >
+                    {loading
+                      ? "Procesando..."
+                      : "Pagar depósito con PayPal (USD)"}
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <Button
+                    className="w-full"
+                    style={{ backgroundColor: primary }}
+                    onClick={handleConfirm}
+                    disabled={loading || !clientName || !clientEmail}
+                  >
+                    {loading ? "Procesando..." : "Confirmar reserva"}
+                  </Button>
+                  {paypalEnabled && (
+                    <Button
+                      variant="outline"
+                      className="w-full"
+                      onClick={handlePaypalPayment}
+                      disabled={loading || !clientName || !clientEmail}
+                    >
+                      Pagar ahora con PayPal (USD)
+                    </Button>
+                  )}
+                </>
               )}
             </CardHeader>
           </Card>

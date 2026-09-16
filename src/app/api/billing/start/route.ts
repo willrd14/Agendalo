@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { createClient, createServiceClient } from "@/lib/supabase/server";
 import {
   createPaypalSubscription,
   PAYPAL_PLANS,
@@ -55,8 +55,14 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Upsert a pending subscription record
-    const { data: existing } = await supabase
+    // Upsert a pending subscription record. Writes to `subscriptions` are
+    // only performed with the service role: the plan/status the user ends
+    // up with must always be derived from a real PayPal subscription
+    // lifecycle (this route, /api/billing/sync and /api/billing/webhook),
+    // never from a client-writable RLS policy (see C-1 fix, migration 0017).
+    const serviceSupabase = createServiceClient();
+
+    const { data: existing } = await serviceSupabase
       .from("subscriptions")
       .select("id")
       .eq("business_id", business.id)
@@ -64,7 +70,7 @@ export async function POST(req: NextRequest) {
       .maybeSingle();
 
     if (existing) {
-      await supabase
+      await serviceSupabase
         .from("subscriptions")
         .update({
           plan,
@@ -72,7 +78,7 @@ export async function POST(req: NextRequest) {
         })
         .eq("id", existing.id);
     } else {
-      await supabase.from("subscriptions").insert({
+      await serviceSupabase.from("subscriptions").insert({
         business_id: business.id,
         plan,
         status: "approval_pending",

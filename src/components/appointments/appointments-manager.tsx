@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
-import { Check, X, CheckCheck, CalendarDays, DollarSign } from "lucide-react";
+import { Check, X, CheckCheck, CalendarDays, DollarSign, Banknote } from "lucide-react";
 
 type AppointmentStatus = "pending" | "confirmed" | "cancelled" | "completed";
 
@@ -26,6 +26,8 @@ interface Client {
   email: string;
 }
 
+type DepositStatus = "unpaid" | "paid" | "refunded";
+
 interface Appointment {
   id: string;
   business_id: string;
@@ -38,6 +40,8 @@ interface Appointment {
   notes: string | null;
   services: Service | null;
   users: Client | null;
+  deposit_amount: number | null;
+  deposit_status: DepositStatus | null;
 }
 
 const statusConfig: Record<
@@ -64,6 +68,15 @@ const statusOrder: AppointmentStatus[] = [
   "completed",
   "cancelled",
 ];
+
+const depositStatusConfig: Record<
+  DepositStatus,
+  { label: string; className: string }
+> = {
+  paid: { label: "Depósito pagado", className: "bg-emerald-100 text-emerald-700" },
+  unpaid: { label: "Depósito pendiente", className: "bg-amber-100 text-amber-700" },
+  refunded: { label: "Depósito reembolsado", className: "bg-muted text-muted-foreground" },
+};
 
 export default function AppointmentsManager({
   initialAppointments,
@@ -95,6 +108,37 @@ export default function AppointmentsManager({
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Error al actualizar cita";
+      toast.error(message);
+    }
+  };
+
+  // QA-5: the "refunded" deposit status was previously unreachable — there
+  // was no UI action to set it, only 'unpaid' -> 'paid' via the online
+  // deposit flow. This is a manual action (not automatic on cancel) since
+  // the actual refund happens outside Agendalo (PayPal dashboard); we just
+  // let the owner record that it happened.
+  const markDepositRefunded = async (appointment: Appointment) => {
+    const confirmed = window.confirm(
+      "¿Confirmas que ya reembolsaste el depósito de esta cita por PayPal? Esto solo actualiza el registro, no procesa el reembolso."
+    );
+    if (!confirmed) return;
+
+    try {
+      const { error } = await supabase
+        .from("appointments")
+        .update({ deposit_status: "refunded" })
+        .eq("id", appointment.id);
+
+      if (error) throw error;
+      setAppointments((prev) =>
+        prev.map((a) =>
+          a.id === appointment.id ? { ...a, deposit_status: "refunded" } : a
+        )
+      );
+      toast.success("Depósito marcado como reembolsado");
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Error al actualizar el depósito";
       toast.error(message);
     }
   };
@@ -225,9 +269,22 @@ export default function AppointmentsManager({
                         </div>
                       </CardDescription>
                     </div>
-                    <Badge className={`${status.bg} ${status.color}`}>
-                      {status.label}
-                    </Badge>
+                    <div className="flex flex-col items-end gap-1.5">
+                      <Badge className={`${status.bg} ${status.color}`}>
+                        {status.label}
+                      </Badge>
+                      {appointment.deposit_amount != null &&
+                        appointment.deposit_amount > 0 &&
+                        appointment.deposit_status && (
+                          <Badge
+                            className={
+                              depositStatusConfig[appointment.deposit_status].className
+                            }
+                          >
+                            {depositStatusConfig[appointment.deposit_status].label}
+                          </Badge>
+                        )}
+                    </div>
                   </div>
                 </CardHeader>
                 <CardContent className="pb-3">
@@ -296,6 +353,18 @@ export default function AppointmentsManager({
                         <DollarSign className="mr-1 h-4 w-4" /> Registrar pago
                       </Button>
                     )}
+                    {appointment.status === "cancelled" &&
+                      appointment.deposit_status === "paid" && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="flex-1"
+                          onClick={() => markDepositRefunded(appointment)}
+                        >
+                          <Banknote className="mr-1 h-4 w-4" /> Marcar depósito
+                          como reembolsado
+                        </Button>
+                      )}
                     {appointment.status !== "pending" &&
                       appointment.status !== "confirmed" && (
                         <Button

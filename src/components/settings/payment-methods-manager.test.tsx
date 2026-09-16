@@ -16,6 +16,13 @@ import PaymentMethodsManager from "@/components/settings/payment-methods-manager
 
 const businessId = "biz-1";
 
+const defaultDeposit = {
+  deposit_required: false,
+  deposit_type: "percentage" as const,
+  deposit_percentage: 20,
+  deposit_fixed_amount: 0,
+};
+
 beforeEach(() => {
   mockUpsert.mockReset();
   (toast.success as any).mockClear();
@@ -29,6 +36,8 @@ describe("PaymentMethodsManager", () => {
         businessId={businessId}
         businessCurrency="DOP"
         initialMethods={[]}
+        plan="basic"
+        initialDeposit={defaultDeposit}
       />
     );
 
@@ -43,6 +52,8 @@ describe("PaymentMethodsManager", () => {
         businessId={businessId}
         businessCurrency="DOP"
         initialMethods={[]}
+        plan="basic"
+        initialDeposit={defaultDeposit}
       />
     );
 
@@ -59,6 +70,8 @@ describe("PaymentMethodsManager", () => {
         businessId={businessId}
         businessCurrency="DOP"
         initialMethods={[]}
+        plan="basic"
+        initialDeposit={defaultDeposit}
       />
     );
 
@@ -78,6 +91,8 @@ describe("PaymentMethodsManager", () => {
         businessId={businessId}
         businessCurrency="DOP"
         initialMethods={[]}
+        plan="basic"
+        initialDeposit={defaultDeposit}
       />
     );
 
@@ -96,6 +111,8 @@ describe("PaymentMethodsManager", () => {
         businessId={businessId}
         businessCurrency="DOP"
         initialMethods={[]}
+        plan="basic"
+        initialDeposit={defaultDeposit}
       />
     );
 

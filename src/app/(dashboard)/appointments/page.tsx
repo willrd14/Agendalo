@@ -28,7 +28,7 @@ export default async function AppointmentsPage() {
   const { data: appointments } = await supabase
     .from("appointments")
     .select(
-      "id, business_id, service_id, client_id, date, start_time, end_time, status, notes, services(name, price, currency), users!appointments_client_id_fkey(full_name, email)"
+      "id, business_id, service_id, client_id, date, start_time, end_time, status, notes, deposit_amount, deposit_status, services(name, price, currency), users!appointments_client_id_fkey(full_name, email)"
     )
     .eq("business_id", business.id)
     .order("date", { ascending: false });

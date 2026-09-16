@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { getPaypalSubscription } from "@/lib/paypal";
 
 const PAYPAL_STATUS_TO_DB: Record<string, string> = {
@@ -60,7 +60,11 @@ export async function GET() {
             ? new Date(paypalDetail.billing_info.next_billing_time).toISOString()
             : sub.current_period_end;
 
-          await supabase
+          // Status is derived from PayPal's own API response, not from
+          // client input — but the write itself still goes through the
+          // service role since the RLS-enforced client no longer has
+          // UPDATE access on `subscriptions` (see C-1 fix).
+          await createServiceClient()
             .from("subscriptions")
             .update({ status: newStatus, current_period_end: periodEnd })
             .eq("id", sub.id);

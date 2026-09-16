@@ -1,3 +1,22 @@
+/**
+ * Escapes HTML-significant characters so user-controlled strings (client
+ * name, notes-derived fields, price notes, etc.) can never break out of the
+ * surrounding markup or inject arbitrary HTML/script into the sent email
+ * (see C-4).
+ */
+export function escapeHtml(value: string): string {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function esc(value: string | undefined | null): string {
+  return value ? escapeHtml(value) : "";
+}
+
 interface AppointmentEmailData {
   businessName: string;
   clientName: string;
@@ -11,6 +30,8 @@ interface AppointmentEmailData {
   cancelUrl?: string;
   appointmentId?: string;
   siteUrl?: string;
+  /** Optional note shown under the price row (e.g. deposit disclaimer). */
+  priceNote?: string;
 }
 
 export function appointmentConfirmationEmail(
@@ -31,33 +52,34 @@ export function appointmentConfirmationEmail(
               </tr>
               <tr>
                 <td style="padding:32px;">
-                  <p style="margin:0 0 8px;color:#374151;">Hola <strong>${data.clientName}</strong>,</p>
-                  <p style="margin:0 0 24px;color:#6b7280;">Tu cita con <strong>${data.businessName}</strong> ha sido programada correctamente.</p>
+                  <p style="margin:0 0 8px;color:#374151;">Hola <strong>${esc(data.clientName)}</strong>,</p>
+                  <p style="margin:0 0 24px;color:#6b7280;">Tu cita con <strong>${esc(data.businessName)}</strong> ha sido programada correctamente.</p>
 
                   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f3f4f6;border-radius:8px;padding:16px;">
                     <tr>
                       <td style="padding:8px 16px;color:#6b7280;font-size:14px;">Servicio</td>
-                      <td style="padding:8px 16px;color:#111827;font-weight:600;">${data.serviceName}</td>
+                      <td style="padding:8px 16px;color:#111827;font-weight:600;">${esc(data.serviceName)}</td>
                     </tr>
                     <tr>
                       <td style="padding:8px 16px;color:#6b7280;font-size:14px;">Fecha</td>
-                      <td style="padding:8px 16px;color:#111827;font-weight:600;">${data.date}</td>
+                      <td style="padding:8px 16px;color:#111827;font-weight:600;">${esc(data.date)}</td>
                     </tr>
                     <tr>
                       <td style="padding:8px 16px;color:#6b7280;font-size:14px;">Hora</td>
-                      <td style="padding:8px 16px;color:#111827;font-weight:600;">${data.startTime} - ${data.endTime}</td>
+                      <td style="padding:8px 16px;color:#111827;font-weight:600;">${esc(data.startTime)} - ${esc(data.endTime)}</td>
                     </tr>
                     <tr>
-                      <td style="padding:8px 16px;color:#6b7280;font-size:14px;">Precio</td>
-                      <td style="padding:8px 16px;color:#059669;font-weight:700;">${data.price} ${data.currency}</td>
+                      <td style="padding:8px 16px;color:#6b7280;font-size:14px;">${data.priceNote ? "Depósito pagado" : "Precio"}</td>
+                      <td style="padding:8px 16px;color:#059669;font-weight:700;">${esc(data.price)} ${esc(data.currency)}</td>
                     </tr>
                   </table>
+                  ${data.priceNote ? `<p style="margin:12px 0 0;color:#6b7280;font-size:13px;">${esc(data.priceNote)}</p>` : ""}
 
                   ${data.cancelUrl ? `
                   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:24px;">
                     <tr>
                       <td align="center" style="padding:8px;">
-                        <a href="${data.cancelUrl}" style="display:inline-block;padding:12px 24px;font-size:14px;font-weight:600;text-decoration:none;color:#ffffff;background-color:#dc2626;border-radius:6px;">Cancelar cita</a>
+                        <a href="${esc(data.cancelUrl)}" style="display:inline-block;padding:12px 24px;font-size:14px;font-weight:600;text-decoration:none;color:#ffffff;background-color:#dc2626;border-radius:6px;">Cancelar cita</a>
                       </td>
                     </tr>
                   </table>
@@ -65,7 +87,7 @@ export function appointmentConfirmationEmail(
                     ¿No puedes asistir? Cancela con antelación para liberar el espacio.
                   </p>` : (data.businessPhone ? `
                   <p style="margin:24px 0 0;color:#6b7280;font-size:14px;">
-                    ¿Necesitas reprogramar o cancelar? Contáctanos al <strong>${data.businessPhone}</strong>
+                    ¿Necesitas reprogramar o cancelar? Contáctanos al <strong>${esc(data.businessPhone)}</strong>
                   </p>` : "")}
                 </td>
               </tr>
@@ -101,28 +123,28 @@ export function appointmentReminderEmail(
               </tr>
               <tr>
                 <td style="padding:32px;">
-                  <p style="margin:0 0 8px;color:#374151;">Hola <strong>${data.clientName}</strong>,</p>
-                  <p style="margin:0 0 24px;color:#6b7280;">Te recordamos que tienes una cita próxima con <strong>${data.businessName}</strong>.</p>
+                  <p style="margin:0 0 8px;color:#374151;">Hola <strong>${esc(data.clientName)}</strong>,</p>
+                  <p style="margin:0 0 24px;color:#6b7280;">Te recordamos que tienes una cita próxima con <strong>${esc(data.businessName)}</strong>.</p>
 
                   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f3f4f6;border-radius:8px;padding:16px;">
                     <tr>
                       <td style="padding:8px 16px;color:#6b7280;font-size:14px;">Servicio</td>
-                      <td style="padding:8px 16px;color:#111827;font-weight:600;">${data.serviceName}</td>
+                      <td style="padding:8px 16px;color:#111827;font-weight:600;">${esc(data.serviceName)}</td>
                     </tr>
                     <tr>
                       <td style="padding:8px 16px;color:#6b7280;font-size:14px;">Fecha</td>
-                      <td style="padding:8px 16px;color:#111827;font-weight:600;">${data.date}</td>
+                      <td style="padding:8px 16px;color:#111827;font-weight:600;">${esc(data.date)}</td>
                     </tr>
                     <tr>
                       <td style="padding:8px 16px;color:#6b7280;font-size:14px;">Hora</td>
-                      <td style="padding:8px 16px;color:#111827;font-weight:600;">${data.startTime} - ${data.endTime}</td>
+                      <td style="padding:8px 16px;color:#111827;font-weight:600;">${esc(data.startTime)} - ${esc(data.endTime)}</td>
                     </tr>
                   </table>
 
                   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:24px;">
                     <tr>
                       <td align="center" style="padding:8px;">
-                        <a href="${data.cancelUrl || "#"}" style="display:inline-block;padding:12px 24px;font-size:14px;font-weight:600;text-decoration:none;color:#ffffff;background-color:#dc2626;border-radius:6px;">Cancelar cita</a>
+                        <a href="${data.cancelUrl ? esc(data.cancelUrl) : "#"}" style="display:inline-block;padding:12px 24px;font-size:14px;font-weight:600;text-decoration:none;color:#ffffff;background-color:#dc2626;border-radius:6px;">Cancelar cita</a>
                       </td>
                     </tr>
                   </table>
@@ -158,21 +180,21 @@ export function appointmentCancelledEmail(
               </tr>
               <tr>
                 <td style="padding:32px;">
-                  <p style="margin:0 0 8px;color:#374151;">Hola <strong>${data.clientName}</strong>,</p>
-                  <p style="margin:0 0 24px;color:#6b7280;">Tu cita con <strong>${data.businessName}</strong> ha sido cancelada.</p>
+                  <p style="margin:0 0 8px;color:#374151;">Hola <strong>${esc(data.clientName)}</strong>,</p>
+                  <p style="margin:0 0 24px;color:#6b7280;">Tu cita con <strong>${esc(data.businessName)}</strong> ha sido cancelada.</p>
 
                   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f3f4f6;border-radius:8px;padding:16px;">
                     <tr>
                       <td style="padding:8px 16px;color:#6b7280;font-size:14px;">Servicio</td>
-                      <td style="padding:8px 16px;color:#111827;font-weight:600;">${data.serviceName}</td>
+                      <td style="padding:8px 16px;color:#111827;font-weight:600;">${esc(data.serviceName)}</td>
                     </tr>
                     <tr>
                       <td style="padding:8px 16px;color:#6b7280;font-size:14px;">Fecha</td>
-                      <td style="padding:8px 16px;color:#111827;font-weight:600;">${data.date}</td>
+                      <td style="padding:8px 16px;color:#111827;font-weight:600;">${esc(data.date)}</td>
                     </tr>
                     <tr>
                       <td style="padding:8px 16px;color:#6b7280;font-size:14px;">Hora</td>
-                      <td style="padding:8px 16px;color:#111827;font-weight:600;">${data.startTime}</td>
+                      <td style="padding:8px 16px;color:#111827;font-weight:600;">${esc(data.startTime)}</td>
                     </tr>
                   </table>
 

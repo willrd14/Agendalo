@@ -2,12 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { createServiceClient } from "@/lib/supabase/server";
 import { createPaypalOrder } from "@/lib/paypal";
-import { getPayPalEligibility } from "@/lib/plans";
+import { getActiveBusinessPlan, isProPlan } from "@/lib/plans";
 import { getClientIp } from "@/lib/rate-limit";
 import { randomUUID } from "crypto";
 
 export const dynamic = "force-dynamic";
 
+// Minimum charge accepted via PayPal, to avoid symbolic/near-zero payments.
 const MIN_CHARGE_USD = 1;
 const MAX_SESSIONS_PER_IP_WINDOW = 5;
 const RATE_LIMIT_WINDOW_MINUTES = 10;
@@ -23,10 +24,9 @@ const bodySchema = z.object({
   appointmentDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Fecha inválida"),
   startTime: z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/, "Hora inválida"),
   endTime: z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/, "Hora inválida"),
-  requestId: z.string().max(100).optional(),
-  // price / conversionRate from the client are intentionally NOT accepted
-  // here (see C-2) — the real price and conversion rate are loaded
-  // server-side from the database below.
+  // price / conversionRate sent by the client are intentionally NOT part of
+  // this schema: they are never trusted (see C-2). The real price and
+  // conversion rate are loaded server-side from the database below.
 });
 
 function genericError(prefix: string, err: unknown): string {
@@ -91,24 +91,33 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // El cobro online por PayPal es feature exclusiva de Pro (o prueba gratuita).
-    const { data: business } = await supabase
-      .from("businesses")
-      .select("id, created_at")
-      .eq("id", body.businessId)
-      .maybeSingle();
-
-    const eligibility = await getPayPalEligibility(
-      supabase,
-      business ?? { id: body.businessId }
-    );
-    if (!eligibility.allowed) {
+    // El depósito para garantizar citas es una función exclusiva del plan
+    // Pro, sin prueba gratuita (a diferencia del cobro completo por
+    // servicio): es una feature de venta del plan, no un beneficio del
+    // trial de PayPal.
+    const plan = await getActiveBusinessPlan(supabase, body.businessId);
+    if (!isProPlan(plan)) {
       return NextResponse.json(
         {
           error:
-            "El pago online por PayPal es una función del plan Pro. Mejora tu plan para activarlo.",
+            "El depósito para garantizar citas es una función del plan Pro. Mejora tu plan para activarlo.",
         },
         { status: 403 }
+      );
+    }
+
+    const { data: business } = await supabase
+      .from("businesses")
+      .select(
+        "deposit_required, deposit_type, deposit_percentage, deposit_fixed_amount"
+      )
+      .eq("id", body.businessId)
+      .maybeSingle();
+
+    if (!business?.deposit_required) {
+      return NextResponse.json(
+        { error: "Este negocio no requiere depósito para reservar" },
+        { status: 400 }
       );
     }
 
@@ -130,7 +139,19 @@ export async function POST(req: NextRequest) {
     }
 
     const price = Number(service.price);
-    const amountUsd = Number((price / conversionRate).toFixed(2));
+    const depositAmountLocal =
+      business.deposit_type === "fixed"
+        ? Number(business.deposit_fixed_amount)
+        : Number(((price * Number(business.deposit_percentage)) / 100).toFixed(2));
+
+    if (!depositAmountLocal || depositAmountLocal <= 0) {
+      return NextResponse.json(
+        { error: "El monto del depósito configurado es inválido" },
+        { status: 400 }
+      );
+    }
+
+    const amountUsd = Number((depositAmountLocal / conversionRate).toFixed(2));
     if (!amountUsd || amountUsd < MIN_CHARGE_USD) {
       return NextResponse.json(
         {
@@ -158,15 +179,16 @@ export async function POST(req: NextRequest) {
         start_time: body.startTime,
         end_time: body.endTime,
         cancel_token: cancelToken,
-        amount_dop: price,
+        amount_dop: depositAmountLocal,
         currency: service.currency,
         amount_usd: amountUsd,
+        session_type: "deposit",
         client_ip: clientIp !== "unknown" ? clientIp : null,
       });
 
     if (sessionError) {
       return NextResponse.json(
-        { error: genericError("create: session insert failed", sessionError) },
+        { error: genericError("create-deposit: session insert failed", sessionError) },
         { status: 500 }
       );
     }
@@ -183,16 +205,17 @@ export async function POST(req: NextRequest) {
         customId: sessionId,
         returnUrl,
         cancelUrl,
-        description: `Reserva: ${service.name} (${body.clientName || body.clientEmail})`,
+        description: `Depósito de reserva: ${service.name} (${body.clientName || body.clientEmail})`,
       });
     } catch (err) {
       return NextResponse.json(
-        { error: genericError("create: PayPal order failed", err) },
+        { error: genericError("create-deposit: PayPal order failed", err) },
         { status: 500 }
       );
     }
 
-    // M-1: persist the order id and fail loudly if it doesn't stick.
+    // M-1: persist the order id and fail loudly if it doesn't stick — we
+    // must never leave a PayPal order created without recording its id.
     const { error: updateError } = await supabase
       .from("payment_sessions")
       .update({ paypal_order_id: order.id })
@@ -200,7 +223,7 @@ export async function POST(req: NextRequest) {
 
     if (updateError) {
       return NextResponse.json(
-        { error: genericError("create: failed to persist paypal_order_id", updateError) },
+        { error: genericError("create-deposit: failed to persist paypal_order_id", updateError) },
         { status: 500 }
       );
     }
@@ -210,10 +233,11 @@ export async function POST(req: NextRequest) {
       orderId: order.id,
       approveUrl: order.approveUrl,
       amountUsd,
+      depositAmountLocal,
     });
   } catch (err) {
     return NextResponse.json(
-      { error: genericError("create: unhandled error", err) },
+      { error: genericError("create-deposit: unhandled error", err) },
       { status: 500 }
     );
   }
